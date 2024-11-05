@@ -1,0 +1,60 @@
+<!-- Code from https://ncoughlin.com/posts/d3-histogram-dropdown-select-data -->
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<!-- Load d3.js -->
+	<script src="https://d3js.org/d3.v6.min.js"></script>
+</head>
+<body>
+<div id="#chart"></div>
+<script>
+async function draw(el) {
+  // Data
+  const dataset = await d3.json('data.json')
+
+  const xAccessor = d => +d.price
+
+  // Dimensions
+  let dimensions = {
+    width: 800,
+    height: 400,
+    margins: 50
+  };
+
+  dimensions.containerWidth = dimensions.width - dimensions.margins * 2
+  dimensions.containerHeight = dimensions.height - dimensions.margins * 2
+
+  // Draw Image
+  const svg = d3.select(el)
+    .append("svg")
+    .attr("width", dimensions.width)
+    .attr("height", dimensions.height)
+
+  const container = svg.append("g")
+    .classed("container", true) 
+    .attr(
+      "transform",
+      'translate(${dimensions.margins}, ${dimensions.margins})'
+    )
+
+  // Scales
+  const xScale = d3.scaleLinear()
+  .domain(d3.extent(dataset, xAccessor))
+  .range([0, dimensions.containerWidth])
+  .nice()
+  
+  // Draw Bars
+  container.selectAll('rect')
+    .data(dataset)
+    .join('rect')
+    .attr('width', 5)
+    .attr('height', 100)
+    .attr('x', d=> xScale(xAccessor(d)))
+    .attr('y', 0)
+}
+
+draw("#chart")
+</script>
+</body>
+</html>
