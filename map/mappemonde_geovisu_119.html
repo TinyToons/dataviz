@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<head>
+	<link type="text/css" href="style.css" rel="stylesheet">
+</head>
+<body>
+	<!-- Bibliothèques de fonctions javaScript -->
+	<script type="text/javascript" src="d3/d3.min.js"></script>
+	<script type="text/javascript" src="d3/topojson.v1.min.js"></script>
+	<script type="text/javascript" src="colorist2.js"></script>
+	<script type="text/javascript" src="geostats/geostats.js"></script>
+	
+	<!-- Script de l'application -->
+	<script type="text/javascript">
+
+	// Variables globales et initialisation des valeurs par défaut
+	var svg;
+	var width = 960
+	var height = 800;
+	var methode = '';
+	var nbcl = 4;
+	var nbf = 40;
+	var datad;
+	var cd;
+	
+	var fond = {};
+	var part_etr = {};
+	var valeurs;
+	var rateById = {};
+	var nameById = {};
+	var items = [];
+	var s = new geostats(); // Intégration des méthodes de la bibliothèque geostats pour les discrétisations
+	s.setPrecision(6);
+
+	// Discrétisations et couleurs des classes
+	function discret(){
+		nbcl = parseInt(document.getElementById('nbcl').value); // Nombre de classes demandé
+		if (this.methode == '') methode = 'Jenks'; // Méthode par défaut
+		// Calcul des déiscrétistions par la bibliothèque geostats
+		switch(methode) {
+		case "quantiles" :
+			var c = s.getClassQuantile(nbcl);
+			return c;
+			break;
+		case "equivalences" :
+			var c = s.getClassEqInterval(nbcl);
+			return c;
+			break;
+		case "progarithm" :
+			var c = s.getClassArithmeticProgression(nbcl);
+			return c;
+			break;
+		case "proggeom" :
+			var c = s.getClassGeometricProgression(nbcl);
+			return c;
+			break;
+		case "moyennes" :
+			if(Math.pow(nbcl - 4, 2) < Math.pow(nbcl - 8, 2)) {nbcl = 4} else {nbcl = 8};
+			document.getElementById('nbcl').value = nbcl;
+			var c = s.getClassMeans(nbcl);
+			return c;
+			break;
+		case "standard" :
+			var c = s.getClassStdDeviation(nbcl);
+			return c;
+			break;
+		case "Jenks" :
+			var c = s.getClassJenks(nbcl);
+			return c;
+			break;
+		}
+	}
+
+	// Détermination de la couleur des classes en fonction de :
+	// - une couleur de début et une couleur de fin, définies en mode TSL
+	// - le nombre de classes voulues
+	function color(methode) {
+		// Couleur de début, un jaune pâle, en TSL
+		var c1t = 52;
+		var c1l  = 100;
+		var c1s = 40;
+		// Couleur de fin, un marron-rougeâtre foncé, en TSL
+		var c2t = 0;
+		var c2l = 40;
+		var c2s = 100;
+		// Calcul des écarts de T, S et L entre classes, pour un dégradé régulier.
+		var g1 = ((c2t - c1t) / (nbcl - 1));
+		var g2 = ((c2s - c1s) / (nbcl - 1));
+		var g3 = ((c2l - c1l) / (nbcl - 1));
+		var n1 = 0; n2 = 0; n3 = 0;
+		var ct = ['#fff'];
+		// Affectation des couleurs TSL par classe.
+		for (var i=1; i<=nbcl; i++) {
+			n1 = c1t + ((i-1) * g1);
+			n2 = c1s + ((i-1) * g2);
+			n3 = c1l + ((i-1) * g3);
+			if (n1 > 360) {n1 = (n1 - 360);}
+			if (n1 < 0) {n1 = (360 + n1);}
+			if (n2 > 100) {n2 = 100;}
+			if (n2 < 0) {n2 = 0;}
+			if (n3 > 100) {n3 = 100;}
+			if (n3 < 0) {n3 = 0;}
+			// Conversion en RGB à l'aide de la bibliothèque colorist.
+			var c = hsv2rgb(n1, n2, n3);
+			ct.push(c);
+		}
+		return d3.scale.threshold()
+		.domain(cd)
+		.range(ct);
+	}
+
+	// Définition de la projection et du centrage de la carte, ici albers, une conique conforme pour des surfaces respectées
+	var projection = d3.geo.albers()
+	.rotate([-2, 0])
+	.center([2, 46])
+	.parallels([29.5, 45.5])
+	.scale(2800)
+	.translate([width / 2 - 140, height / 2 - 120])
+	.precision(.1);
+
+	var path = d3.geo.path()
+	.projection(projection);
+
+	var div = d3.select("body").append("div")
+	.attr("class", "tooltip")
+	.style("opacity", 0);
+
+	// Ouverture du fond de carte au format json et liaison avec le fichier de données (même ordre des départements)
+	d3.json("fond.json", function(error, fond) {
+		if (error) return console.warn(error);
+		this.fond = fond;
+		d3.tsv("hotels2015etr.tsv", function(error, table){
+			if (error) return console.warn(error);
+			table.forEach(function(d) {
+				items.push(parseFloat(d.part_etr));
+				rateById[d.id] = +d.part_etr;
+				nameById[d.id] = d.nom;
+			});
+			s.setSerie(items); // La variable est passée à la bibliothèque de discrétisation
+			// Dessin de la carte, avec les valeurs par défaut, après chargement du fond
+			carte();
+		});
+	});
+
+	// Dessin de la carte, d'après la méthode de discrétisation choisie (ou par défaut), puis de la légende.
+	function carte(gui_methode) {
+		if(typeof gui_methode != 'undefined') this.methode = gui_methode;
+		dessinCarte();
+		legende();
+	}
+
+	// Dessin de la carte
+	function dessinCarte() {
+		width = this.width;
+		height = this.height;
+		cd = discret(methode);
+
+		// On efface la carte SVG précédente
+		var svg = d3.select("svg")
+		svg.remove();
+
+		// On crée une nouvelle carte SVG
+		var svg = d3.select("body").append("svg")
+		.attr("width", width)
+		.attr("height", height);
+
+		this.svg = svg;
+
+		// Dessin du fond de carte en colorant les départements selon la choroplèthe
+		svg.append("g")
+		.attr("class", "depts")
+		.selectAll("path")
+		.data(topojson.feature(fond, fond.objects.depts).features)
+		.enter().append("path")
+		.attr("d", path)
+		.style("fill", function(d) {
+			if (typeof rateById[d.id] == 'undefined' ) {
+				return "#AAA";
+			} else {
+				var c = color(methode); // Récupération de la couleur du département selon les classes
+				return c(rateById[d.id]);
+			}
+		})
+		
+		//Informations au survol de la souris
+		.on("mouseover", function(d) {
+			div.transition().duration(200)
+			.style("opacity", 1)
+			if (typeof rateById[d.id] != "undefined" ) {
+				div.text(nameById[d.id] + " : " + d3.round(rateById[d.id], 2))
+				.style("left", (d3.event.pageX) + "px")
+				.style("top", (d3.event.pageY -30) + "px");
+			} else {
+				div.text(nameById[d.id] + " : n/a")
+				.style("left", (d3.event.pageX) + "px")
+				.style("top", (d3.event.pageY -30) + "px");
+			}
+		})
+		.on("mouseout", function() {
+			div.transition().duration(200)
+			.style("opacity", 0);
+		});
+
+
+		// Histogramme des fréquences
+
+		var formatCount = d3.format(",.0f"); // Mise au format des valeurs pour affichage
+		var margin = {top: 24, right: 20, bottom: 20, left: 20},
+		width = 400 - margin.left - margin.right,
+		height = 210 - margin.top - margin.bottom;
+
+		// Stockage des valeurs à représenter
+		valeurs = Object.keys(rateById).map(function (key) {return rateById[key];});
+		var vMin = Math.min.apply(Math, valeurs);
+		if (vMin > cd[0]) {vMin = cd[0]};
+		var vMax = Math.max.apply(Math, valeurs);
+
+		// Dimensionnement de l'axe X
+		var x = d3.scale.linear()
+		.domain([0, (vMax-vMin)])
+		.range([0, width]);
+
+		// Dimensionnement
+		var x2 = d3.scale.linear()
+		.domain([vMin, vMax])
+		.range([0, width]);
+
+		// Nombre de barres de féquences à dessiner, d'après le curseur de la page
+		var nbf = parseInt(document.getElementById('nbf').value);
+
+		// Dessin de l'histogramme
+		var data = d3.layout.histogram()
+		.bins(nbf)
+		(valeurs);
+
+		var y = d3.scale.linear()
+		.domain([0, d3.max(data, function(d) { return d.y; })])
+		.range([height, -1]);
+
+		var xAxis = d3.svg.axis()
+		.scale(x2)
+		.orient("bottom");
+
+		var histof = svg.append("g")
+		.attr("transform", "translate(" + (560+margin.left) + "," + margin.top + ")");
+
+		var bar = histof.selectAll(".bar")
+		.data(data)
+		.enter().append("g")
+		.attr("class", "bar")
+		.attr("fill", "grey")
+		.attr("transform", function(d) { return "translate(" + x2(d.x) + "," + y(d.y) + ")"; });
+
+		bar.append("rect")
+		.attr("x", 1)
+		.attr("width", function(d) {
+			if (x(d.dx) > 0) {
+				return x(d.dx) - 1
+			} else {
+				return 1;
+			}
+		})
+		.attr("height", function(d) { return height - y(d.y); });
+
+		bar.append("text")
+		.attr("dy", ".6em")
+		.attr("y", 6)
+		.attr("x", function(d) { return x(d.dx) / 2; })
+		.attr("text-anchor", "middle")
+		.text(function(d) { if (d.y > 0) {return formatCount(d.y);} });
+
+		histof.append("g")
+		.attr("class", "x axis")
+		.attr("transform", "translate(0," + height + ")")
+		.call(xAxis);
+
+
+		// Histogramme de la discrétisation
+
+		var histod = svg.append("g")
+		.attr("transform", "translate(" + (560 + margin.left) + "," + (250 + margin.top) + ")");
+
+		datad = d3.layout.histogram()
+		.bins(cd)
+		(valeurs);
+
+		var y2 = d3.scale.linear()
+		.domain([0, d3.max(datad, function(d) { return d.y; })])
+		.range([height, -1]);
+
+		var bar = histod.selectAll(".bar")
+		.data(datad)
+		.enter().append("g")
+		.attr("class", "bar")
+		.attr("fill", function(d) {
+			if (d.x ==0) {
+				return "#AAA";
+			} else {
+				var c = color(methode);
+				return c(d.x);
+			}
+		})
+		.attr("transform", function(d) { return "translate(" + x2(d.x) + "," + y2(d.y) + ")"; });
+
+		bar.append("rect")
+		.attr("x", 1)
+		.attr("width", function(d) {
+			if (x(d.dx) > 0) {
+				return x(d.dx) - 1
+			} else {
+				return 1;
+			}
+		})
+		.attr("height", function(d) { return height - y2(d.y); });
+
+		bar.append("text")
+		.attr("dy", ".6em")
+		.attr("y", 6)
+		.attr("x", function(d) { return x(d.dx) / 2; })
+		.attr("text-anchor", "middle")
+		.attr("fill", "white")
+		.text(function(d) { if (d.y > 0) {return formatCount(d.y);} });
+
+		histod.append("g")
+		.attr("class", "x axis")
+		.attr("transform", "translate(0," + height + ")")
+		.call(xAxis);
+		
+		// Ajout de l'échelle
+		
+		svg.append("line")
+		.attr("x1", 340)
+        .attr("y1", 470)
+        .attr("x2", 420)
+        .attr("y2", 470)
+		.attr("stroke-width", 1)
+        .attr("stroke", "grey");
+		
+		svg.append("text")
+		.attr("x", 366)
+		.attr("y", 468)
+		.attr("font-size", 10)
+		.text("200 km");
+
+		// Ajout des libellés sur la page
+
+		svg.append("text")
+		.attr("x", 570)
+		.attr("y", 20)
+		.attr("font-size", 12)
+		.attr("font-weight", "bold")
+		.text("Fréquences");
+
+		svg.append("text")
+		.attr("x", 570)
+		.attr("y", 250)
+		.attr("font-size", 12)
+		.attr("font-weight", "bold")
+		.text("Discrétisation : " + methode);
+
+		svg.append("text")
+		.attr("x", 80)
+		.attr("y", 20)
+		.text("Part des nuitées de résidents étrangers en 2015");
+
+		svg.append("text")
+		.attr("x", 300)
+		.attr("y", 600)
+		.attr("font-size", 10)
+		.text("Sources : INSEE, 2016, IGN");
+
+		svg.append("text")
+		.attr("x", 300)
+		.attr("y", 612)
+		.attr("font-size", 10)
+		.text("Réalisation : M@ppemonde - 12/2016");
+	}
+
+
+	//Dessin de la légende de la carte
+
+	function legende () {
+		var width = this.width;
+		var height = this.height + 20;
+		var ecd = cd.slice(0);
+		ecd[0] = 0;
+
+		var legend = svg.selectAll("g.legend")
+		.data(datad)
+		.enter().append("g")
+		.attr("class", "legend");
+
+		var ls_w = 40, ls_h = (160 / cd.length);
+
+		legend.append("rect")
+		.attr("x", 100)
+		.attr("y", function(d, i){
+			return (height - 200) - (i*ls_h) - 2*ls_h;
+		})
+		.attr("width", ls_w)
+		.attr("height", ls_h)
+		.attr("stroke", "white")
+		.style("fill", function(d, i) {
+			var c = color(methode);
+			return c(d.x);
+		});
+
+		legend.append("text")
+		.attr("x", 154)
+		.attr("y", function(d, i){
+			return (height - 200) - (i*ls_h) - (ls_h / 2) - 4;
+		})
+		.text(function(d, i){
+			return (d3.round(cd[i], 2));
+		});
+
+		var ajoutLegende = svg.select("g.legend");
+		var nbcl = cd.length - 1;
+
+		ajoutLegende.append("text")
+		.attr("x", 154)
+		.attr("y", (height - 200) - (nbcl*ls_h) - (ls_h / 2) - 4)
+		.text(d3.round(cd[nbcl], 2));
+
+		legend.append("text")
+		.attr("x", 120)
+		.attr("y", (height - 368))
+		.text("En pourcentage");
+	}
+
+	</script>
+	<div class="gui">
+		<button onClick="carte('quantiles');">Quantiles</button>
+		<button onClick="carte('equivalences');">Équivalences</button>
+		<button onClick="carte('progarithm');">Prog. arithmétique</button>
+		<button onClick="carte('proggeom');">Prog. géométrique</button><br>
+		<button onClick="carte('moyennes');">Moyennes</button>
+		<button onClick="carte('standard');">Standard</button>
+		<button onClick="carte('Jenks');">Jenks</button><br>
+		<input id="nbcl" type="range" width="110px;" min="2" max="10" value="5" onChange="carte();" onInput="carte();"/><span class='legend'>Nbre. de classes</span><br>
+		<input id="nbf" type="range" width="110px;" min="0" max="100" value="40" onChange="carte();" onInput="carte();"/><span class='legend'>Nbre. de barres de fréquences</span>
+	</div>
+</body>
+</html>
