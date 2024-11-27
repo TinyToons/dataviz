@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<!-- Load d3.js -->
+<script src="https://d3js.org/d3.v3.min.js"></script>
+<script type="text/javascript" src="https://d3js.org/topojson.v1.min.js"></script>
+<body>
+<script>
+	function draw(topo_data) {
+        "use strict";
+        var margin = 75,
+            width = 1400 - margin,
+            height = 600 - margin;
+
+        var svg = d3.select("body")
+            .append("svg")
+            .attr("width", width + margin)
+            .attr("height", height + margin)
+            .append('g')
+            .attr('class', 'map');
+
+        var projection = d3.geo.equirectangular()
+                               .scale(1000)
+                               .translate([width / 2, height / 1.2]);
+
+        var path = d3.geo.path().projection(projection);
+		
+		debugger;
+		// Create an empty object for storing data
+		var geo_data = {};
+		// Get the array of the topojson objects
+		var arrOfKeys = Object.keys(topo_data.objects);
+
+		// Loop through arrOfKeys and create a key for geoData to store the geojson info for that key
+		arrOfKeys.forEach(key => {
+			geo_data[key] = topojson.feature(topo_data, topo_data.objects[key]);
+		})
+		// Create 3 g elements based on the keys of the "objects"
+		const groups = svg
+			.selectAll("g")
+			.data(Object.keys(topo_data.objects))
+			.enter()
+			.append("g")
+			.attr("class", (d)=>d)
+        // Create all paths for the separate g element
+		var assets = groups
+			.selectAll("path")
+			.data(key=> topojson.feature(topo_data, topo_data.objects[key]).features)
+			.enter()
+			.append("path")
+			.attr("d", path)
+	}
+	d3.selectAll('svg').remove();
+	//Load data and log it into the console
+	/*d3.json("topojson_101.json", function(error, topojson_101) {
+		if (error) return console.error(error);
+		console.log(topojson_101);
+	});*/
+	//Load data and draw it
+	d3.json("topojson_101.json", draw);
+</script>
+					
+</body>
+</html>
